@@ -5,83 +5,234 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.Scanner;
 
+
+
 class Implicant {
-    private int numTerms;
-    boolean[] bits;
+    enum Literal {
+        ELIMINATED('-'), FALSE('0'), TRUE('1');
+        private final char character;
+        Literal(char character) {
+            this.character = character;
+        }
+        char toChar() {
+            return character;
+        }
+    }
+    Literal[] literals;
+
+    int numTerms;
     int bitCount;
+    private boolean primeImplicant;
 
     Implicant(int numTerms, int key) {
         this.numTerms = numTerms;
-        this.bits = new boolean[numTerms];
+        this.literals = new Literal[numTerms];
         this.bitCount = 0;
+        this.primeImplicant = false;
 
         int mask = 1;
         for (int i = 0; i < numTerms; i++) {
-            int bit = key & mask;
-            bits[i] = (bit == mask);
-            bitCount += bits[i] ? 1 : 0;
+            if ((key & mask) == mask) {
+                literals[i] = Literal.TRUE;
+                bitCount++;
+            } else {
+                literals[i] = Literal.FALSE;
+            }
             mask *= 2;
         }
     }
 
-    void print() {
+    Implicant(Implicant other) {
+        this.numTerms = other.numTerms;
+        this.literals = other.literals.clone();
+        this.bitCount = other.bitCount;
+        this.primeImplicant = false;
+    }
+
+    void eliminateLiteral(int pos) {
+        literals[pos] = Literal.ELIMINATED;
+    }
+
+    void setPrimeImplicant() {
+        primeImplicant = true;
+    }
+
+    boolean isPrimeImplicant() {
+        return primeImplicant;
+    }
+
+    public String toString() {
+        StringBuilder result = new StringBuilder();
         for (int i = numTerms-1; i >= 0; i--) {
-            System.out.print(bits[i] ? 1 : 0);
+            result.append(literals[i].toChar());
         }
+        if (isPrimeImplicant()) {
+            result.append("*");
+        }
+        return result.toString();
+    }
+
+    public boolean equals(Implicant other) {
+        boolean success = true;
+        for (int i = 0; i < numTerms; i++) {
+            if (this.literals[i] != other.literals[i]) {
+                success = false;
+                break;
+            }
+        }
+        return success;
     }
 }
 
 class ImplicantTable {
+    private class Column {
+        private ArrayList<LinkedList<Implicant>> entries;
+        Column() {
+            entries = new ArrayList<LinkedList<Implicant>>();
+            for (int i = 0; i <= numTerms; i++) {
+                entries.add(new LinkedList<Implicant>());
+            }
+        }
+        void add(int row, Implicant term) {
+            if (entries.get(row).indexOf(term) == -1) {
+                entries.get(row).add(term);
+            }
+        }
+        LinkedList<Implicant> get(int row) {
+            return entries.get(row);
+        }
+        void set(int row, LinkedList<Implicant> list) {
+            entries.set(row, list);
+        }
+    }
     private int numTerms;
-    private ArrayList<LinkedList<Implicant>> table;
+    private Column[] table;
 
-    ImplicantTable(int n) {
-        numTerms = n;
-        initializeTable();
+    ImplicantTable(int numTerms) {
+        this.numTerms = numTerms;
+        table = new Column[]{new Column(), new Column(), new Column()};
     }
 
-    private void initializeTable() {
-        table = new ArrayList<LinkedList<Implicant>>();
-        for (int i = 0; i < numTerms+1; i++) {
-            table.add(new LinkedList<Implicant>());
+    void addTerm(int value) {
+        Implicant minTerm = new Implicant(numTerms, value);
+        table[0].add(minTerm.bitCount, minTerm);
+    }
+
+    /*for each row n except the last,
+    *   consider n and n+1
+    *       compare each in n to each in n+1
+    *       then write over n?
+    * */
+
+    void compute() {
+        computeAdjacencies(0);
+
+        computeAdjacencies(1);
+    }
+
+    private void computeAdjacencies(int column) {
+        for (int i = 0; i < numTerms; i++) {
+            LinkedList<Implicant> newEntry = compareGroups(table[column].get(i), table[column].get(i + 1));
+            table[column+1].set(i, newEntry);
         }
     }
 
-    void insert(int value) {
-        Implicant minTerm = new Implicant(numTerms, value);
-        table.get(minTerm.bitCount).add(minTerm);
+    private LinkedList<Implicant> compareGroups(LinkedList<Implicant> currentGroup, LinkedList<Implicant> nextGroup) {
+        LinkedList<Implicant> newGroup = new LinkedList<Implicant>();
+        for (Implicant j : currentGroup) {
+            if (j.isPrimeImplicant()) {
+                continue;
+            }
+            boolean combined = false;
+            for (Implicant k : nextGroup) {
+                int position = compareImplicants(j, k);
+                if (position == -1) { // if more than one bit differs, skip
+                    continue;
+                }
+                Implicant newImplicant = new Implicant(j);
+                newImplicant.eliminateLiteral(position);
+                newGroup.add(newImplicant);
+                combined = true;
+            }
+            if (!combined) {
+                j.setPrimeImplicant();
+            }
+        }
+        return newGroup;
     }
 
+    private int compareImplicants(Implicant a, Implicant b) { // refactor this it's ugly
+        if (a.numTerms != b.numTerms) { return -1; }
+
+        boolean foundDifference = false;
+        int differingPosition = -1;
+
+        for (int i = 0; i < a.numTerms; i++) {
+
+            if (a.literals[i] != b.literals[i]) {
+                if (foundDifference) { // more than 1 bit is different
+                    return -1;
+                }
+                foundDifference = true;
+                differingPosition = i;
+            }
+        }
+        return differingPosition;
+    }
+
+    public String toString() {
+        StringBuilder result = new StringBuilder();
+        for (int column = 0; column < 3; column++) {
+            result.append("Column ").append(column).append(":\n");
+            for (int i = 0; i <= numTerms; i++) {
+                for (Implicant current : table[column].get(i)) {
+                    result.append(current.toString());
+                    result.append("\n");
+                }
+                result.append("____\n");
+            }
+        }
+        return result.toString();
+    }
+}
+
+class CoverageTable {
 
 }
 
-
 class QuineMcClusky {
     private int numTerms;
-    int[] minTerms;
-    int[] dontCares;
+    private LinkedList<Integer> minTerms;
+    private LinkedList<Integer> dontCares;
 
     private ImplicantTable implicantTable;
 
-    QuineMcClusky(Scanner in) {
-        String[] input = in.nextLine().split(" ");
+    QuineMcClusky(String in) {
+        String[] input = in.split(" ");
         numTerms = Integer.parseInt(input[0]);
 
-        boolean dontCare = false;
+        minTerms = new LinkedList<Integer>();
+        dontCares = new LinkedList<Integer>();
+        implicantTable = new ImplicantTable(numTerms);
+        parseTerms(input);
+    }
+
+    private void parseTerms(String[] input) {
+        LinkedList<Integer> target = minTerms;
         for (int i = 1; i < input.length; i++) {
-            if (!dontCare) { // if we do care
-                if (input[i].equals("d")) {
-                    dontCare = true;
-                    continue;
-                }
-                //log as minterms
-
-            } else {
-                //log as dont cares
+            if (input[i].equals("d")) {
+                target = dontCares;
+                continue;
             }
-
+            int value = Integer.parseInt(input[i]);
+            target.add(value);
+            implicantTable.addTerm(value);
         }
+    }
 
+    void solve() {
+        implicantTable.compute();
+        System.out.println(implicantTable);
     }
 
 
@@ -94,13 +245,10 @@ class QuineMcClusky {
 }
 
 public class JCYUP1 {
-
     public static void main(String[] args) throws FileNotFoundException {
-        String inputLine = new Scanner(new File("hw3data.txt")).nextLine();
-        String input[] = inputLine.split(" ");
-        int N  = Integer.parseInt(input[0]);
+        String input = new Scanner(new File("hw3data.txt")).nextLine();
+        QuineMcClusky solver = new QuineMcClusky(input);
+        solver.solve();
 
-        Implicant a = new Implicant(4, 11);
-        a.print();
     }
 }
