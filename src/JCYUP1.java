@@ -6,9 +6,14 @@ import java.util.*;
 
 public class JCYUP1 {
     public static void main(String[] args) throws FileNotFoundException {
-        //String fileName = "hw3data.txt";
-        //String input = new Scanner(new File(fileName)).nextLine();
-        String input = new Scanner(System.in).nextLine();
+        process(new Scanner(System.in));
+    }
+
+    static void processFile(String fileName) throws FileNotFoundException {
+        process(new Scanner(new File(fileName)));
+    }
+    static void process(Scanner in) {
+        String input = in.nextLine();
 
         QuineMcClusky solver = new QuineMcClusky(input);
         solver.solve();
@@ -47,16 +52,23 @@ class QuineMcClusky {
     }
 
     void solve() {
+        //TimeUnit seconds = new TimeUnit();
+        double startTime = ((double) System.nanoTime())/1000000;
         implicantTable.solve();
+        double impTable = ((double) System.nanoTime())/1000000;
         coverageTable = new CoverageTable(this);
         coverageTable.solve();
+        double covTable = ((double) System.nanoTime())/1000000;
+        System.out.printf("IT: %fms | CT %fms | Total: %fms\n", impTable - startTime, covTable - impTable, covTable - startTime);
     }
 }
 
 class ImplicantTable {
     private class Column {
-        private ArrayList<LinkedList<Implicant>> entries;
+        boolean empty;
+        private final ArrayList<LinkedList<Implicant>> entries;
         Column() {
+            empty = true;
             entries = new ArrayList<LinkedList<Implicant>>();
             for (int i = 0; i <= numTerms; i++) {
                 entries.add(new LinkedList<Implicant>());
@@ -64,12 +76,20 @@ class ImplicantTable {
         }
         void add(int row, Implicant term) {
             entries.get(row).add(term);
+            empty = false;
         }
         LinkedList<Implicant> get(int row) {
             return entries.get(row);
         }
         void set(int row, LinkedList<Implicant> list) {
             entries.set(row, list);
+            if (empty && !list.isEmpty()) {
+                empty = false;
+            }
+        }
+
+        boolean isEmpty() {
+            return empty;
         }
 
         public String toString() {
@@ -88,25 +108,28 @@ class ImplicantTable {
         }
     }
 
-    private int numTerms;
-    private Column[] table;
-    private LinkedList<Implicant> primeImplicants;
+    private final int numTerms;
+    private final ArrayList<Column> table;
+    private final LinkedList<Implicant> primeImplicants;
 
     ImplicantTable(int numTerms) {
         this.numTerms = numTerms;
-        table = new Column[3];
-        table[0] = new Column();
+        table = new ArrayList<Column>();
+        table.add(0, new Column());
         primeImplicants = new LinkedList<Implicant>();
     }
 
     void addTerm(int value) {
         Implicant minTerm = new Implicant(numTerms, value);
-        table[0].add(minTerm.bitCount, minTerm);
+        table.get(0).add(minTerm.bitCount, minTerm);
     }
 
     void solve() { // TODO: might take more than 2 iterations
-        table[1] = computeAdjacencies(table[0]);
-        table[2] = makeAllPrimeImplicants(computeAdjacencies(table[1]));
+        int i = 0;
+        while (!table.get(i).isEmpty()) {
+            table.add(computeAdjacencies(table.get(i)));
+            i++;
+        }
     }
 
     private Column computeAdjacencies(Column column) {
@@ -124,11 +147,11 @@ class ImplicantTable {
             if (a.isPrimeImplicant) { continue; }
             for (Implicant b : nextGroup) {
                 Implicant newImplicant = combineImplicants(a, b);
-                if (newImplicant != null && newGroup.indexOf(newImplicant) == -1) {
+                if (newImplicant != null && !newGroup.contains(newImplicant)) {
                     newGroup.add(newImplicant);
                 }
             }
-            if (!a.hasBeenCombined) {
+            if (!a.marked) {
                 a.isPrimeImplicant = true;
                 primeImplicants.add(a);
             }
@@ -178,9 +201,11 @@ class ImplicantTable {
 
     public String toString() {
         StringBuilder result = new StringBuilder();
-        for (int i = 0; i <= 2; i++) {
+        int i = 0;
+        for (Column current : table) {
             result.append("Column ").append(i).append(":\n");
-            result.append(table[i]);
+            result.append(current);
+            i++;
         }
         return result.toString();
     }
@@ -199,7 +224,7 @@ class Implicant implements Comparable<Implicant> {
     int numTerms;
     int bitCount;
     int elims;
-    boolean hasBeenCombined;
+    boolean marked;
     boolean isPrimeImplicant;
     ArrayList<Integer> coverage;
 
@@ -210,7 +235,7 @@ class Implicant implements Comparable<Implicant> {
         this.bitCount = 0;
         this.elims = 0;
         this.isPrimeImplicant = false;
-        this.hasBeenCombined = false;
+        this.marked = false;
 
         this.coverage = initializeCoverage();
         this.coverage.add(value);
@@ -238,7 +263,7 @@ class Implicant implements Comparable<Implicant> {
         this.elims = other.elims;
         this.bitCount = other.bitCount;
         this.isPrimeImplicant = false;
-        this.hasBeenCombined = false;
+        this.marked = false;
 
         this.coverage = initializeCoverage();
         this.coverage.addAll(other.coverage);
@@ -260,8 +285,8 @@ class Implicant implements Comparable<Implicant> {
         Implicant newImplicant = new Implicant(a);
         newImplicant.literals[position] = Literal.ELIMINATED;
         newImplicant.elims++;
-        a.hasBeenCombined = true;
-        b.hasBeenCombined = true;
+        a.marked = true;
+        b.marked = true;
         for (Integer value : b.coverage) { // merge a and b coverage
             if (!a.coverage.contains(value)) {
                 newImplicant.coverage.add(value);
@@ -374,6 +399,7 @@ class CoverageTable {
             updateCoverage();
             circular = !addSolutions(circular); // circular is true if nothing was removed
         }
+        Collections.sort(solution);
         StringBuilder result = new StringBuilder("F");
         for (Implicant current : solution) {
             result.append(" + ").append(current);
@@ -389,7 +415,7 @@ class CoverageTable {
             Implicant current = (Implicant) it.next();
             for (Integer i : current.coverage) {
                 if (coverage[i] == 1 || circular) { //only term covering or just select the first one b/c circular
-                    System.out.println(current + " is the only implicant covering " + i);
+                    //System.out.println(current + " is the only implicant covering " + i);
                     solution.add(current);
                     it.remove();
                     removee = current;
@@ -420,10 +446,10 @@ class CoverageTable {
                 if (trash.contains(current) || trash.contains(other)) { continue; }
                 if (aIsSubsetofB(current.coverage, other.coverage)) {
                     trash.add(current);
-                    System.out.println("Removing " + current);
+                    //System.out.println("Removing " + current);
                 } else if (aIsSubsetofB(other.coverage, current.coverage)) {
                     trash.add(other);
-                    System.out.println("Removing " + other);
+                    //System.out.println("Removing " + other);
                 }
             }
         }
